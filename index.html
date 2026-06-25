@@ -137,6 +137,24 @@
   .notice{background:#fbf6ee;border:1px solid #ecdfc6;border-radius:8px;padding:12px 14px;
     font-size:.82rem;color:#6b5520;margin:18px 0 0;}
   .notice b{color:#5a4416;}
+
+  /* 소견 초안 영역 */
+  .opinion{background:var(--bg);border:1px solid var(--line);border-radius:var(--radius);
+    padding:20px;margin-top:20px;}
+  .opinion h2{margin:0 0 6px;font-size:1.05rem;color:var(--navy-deep);}
+  .opinion .lead{font-size:.82rem;color:var(--slate);margin:0 0 14px;}
+  .opinion .fields{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:14px;}
+  .opinion .field{flex:1;min-width:200px;}
+  .opinion .field label{display:block;font-size:.76rem;color:var(--slate);margin-bottom:4px;font-weight:600;}
+  .opinion .field input{width:100%;font-family:inherit;font-size:.88rem;color:var(--navy);
+    border:1px solid var(--line);border-radius:7px;padding:8px 10px;background:#fff;}
+  .opinion .field input:focus{outline:none;border-color:var(--burgundy);box-shadow:0 0 0 3px rgba(124,45,58,.12);}
+  .opinion textarea{width:100%;min-height:300px;font-family:"SFMono-Regular",ui-monospace,Menlo,Consolas,monospace;
+    font-size:.82rem;line-height:1.6;color:var(--navy);border:1px solid var(--line);border-radius:8px;
+    padding:14px;background:var(--bg-muted);resize:vertical;white-space:pre;overflow-wrap:normal;overflow-x:auto;}
+  .opinion textarea:focus{outline:none;border-color:var(--burgundy);box-shadow:0 0 0 3px rgba(124,45,58,.12);}
+  .opinion .hint{font-size:.76rem;color:var(--slate-light);margin:8px 2px 0;}
+  .opinion .hint b{color:var(--warn);}
   footer.disc{margin-top:24px;padding-top:18px;border-top:1px solid var(--line);
     font-size:.76rem;color:var(--slate);line-height:1.65;}
   footer.disc b{color:var(--navy);}
@@ -202,6 +220,32 @@
       모두 '심한 장애인'). <b>심장이식</b>을 받은 사람은 점수와 무관하게
       '심하지 않은 장애인'으로 별도 판정됩니다.
     </div>
+  </div>
+
+  <!-- 진단서 소견 칸 초안 -->
+  <div class="opinion" id="opinionPanel">
+    <h2>진단의사 소견 칸 초안</h2>
+    <p class="lead">위 점수를 「장애 정도 심사용 진단서」의 소견 칸 서술 형식으로 자동 구성합니다.
+      날짜·실측치 등 근거는 <b>[ ]</b> 자리에 직접 채워 넣으세요.</p>
+    <div class="fields">
+      <div class="field">
+        <label for="fDx">원인 심질환명 (선택)</label>
+        <input type="text" id="fDx" placeholder="예: 허혈성 심근병증에 의한 만성 심부전 (HFrEF)">
+      </div>
+      <div class="field">
+        <label for="fPeriod">직전 진료기간 (선택)</label>
+        <input type="text" id="fPeriod" placeholder="예: 2024-03 ~ 2025-06">
+      </div>
+    </div>
+    <textarea id="opinionText" spellcheck="false" aria-label="소견 초안"></textarea>
+    <div class="actions">
+      <button class="act primary" id="copyOpinionBtn">소견 초안 복사</button>
+      <button class="act ghost" id="refreshOpinionBtn">초안 다시 생성</button>
+      <span class="copied-toast" id="copiedToast2">복사되었습니다</span>
+    </div>
+    <p class="hint"><b>주의</b> — 자동 생성된 점수는 화면 선택값을 반영하며, 각 항목의 객관적 근거검사
+      (측정 날짜·수치)는 의사가 [ ] 자리에 기재해야 합니다. 진단서에 적은 값과 첨부 검사자료가
+      일치해야 심사에서 인정됩니다. 입력란 내용은 저장되지 않습니다.</p>
   </div>
 
   <footer class="disc">
@@ -568,7 +612,13 @@ function recompute(){
   });
   document.getElementById("summaryTotal").textContent = `${total} / ${MAX_TOTAL}`;
   recompute._rows = rows; recompute._total = total; recompute._v = v; recompute._transplant = transplant;
+  // 소견 초안도 함께 갱신 (사용자가 빈칸을 이미 채웠다면 덮어쓰지 않도록 옵션 처리)
+  if(typeof refreshOpinion==="function" && !opinionLocked()) refreshOpinion();
 }
+
+/* 사용자가 소견 textarea를 직접 편집했는지 추적 — 편집 후에는 자동 덮어쓰기 중단 */
+let _opinionEdited=false;
+function opinionLocked(){ return _opinionEdited; }
 
 function pickLabel(group){
   const r = cardsEl.querySelector(`input[name="${group}"]:checked`);
@@ -603,8 +653,94 @@ function buildCopyText(){
   lines.push("※ 참고용. 최종 판정은 고시 원문 및 국민연금공단 장애심사 기준에 따름.");
   return lines.join("\n");
 }
+
+/* ----------------------------------------------------------------------------
+   소견 칸 초안 생성 — 점수(자동) + 근거검사 빈칸([ ])
+   각 항목 code별로 근거검사 문구 골격을 정의. 미선택 항목은 '해당 없음' 처리.
+   -------------------------------------------------------------------------- */
+function evidencePhrase(code, row){
+  // 점수가 없으면(미선택) 간단 처리
+  const picked = !(row.score===null||row.score===undefined);
+  switch(code){
+    case "가":
+      if(!picked) return "운동부하검사 또는 증상중증도 미평가";
+      return state.exMode==='exercise'
+        ? `[__년 __월 __일] 시행 운동부하검사 Peak [__] METs, ${row.label}`
+        : `심장질환증상중증도 ${row.label} (운동부하검사 시행 불가/부적절)`;
+    case "나":
+      if(!picked) return "좌심실구혈률 미평가";
+      if(state.lvefMode==='standard')
+        return `[__년 __월 __일] 경흉부 심초음파상 LVEF [__]%, ${row.label}`;
+      if(state.lvefMode==='congenital')
+        return `선천성 심장질환 기능평가: ${row.label}`;
+      return `좌심실구혈률 정상이나 일상생활 제한, 증상중증도 가중표 ${row.label}`;
+    case "다":
+      if(!picked) return "검사소견상 특이소견 없음";
+      return `${row.label} [흉부 X선 CTR __%, 심전도 판독 첨부]`;
+    case "라":
+      return picked ? `${row.label} [시행 시기 __년 __월]` : "심장수술 및 중재시술 병력 없음";
+    case "마":
+      return picked ? `[__년 __월] ${row.label} (입원 시 객관적 자료 첨부)` : "최근 9개월 내 해당 입원력 없음";
+    case "바":
+      return picked ? `최근 9개월 내 ${row.label}` : "최근 9개월 내 해당 입원 없음";
+    case "사":
+      return picked ? `최근 9개월 내 ${row.label}` : "최근 9개월 내 통원치료 기록 없음";
+    default:
+      return row.label||"—";
+  }
+}
+
+function buildOpinionText(){
+  const rows=recompute._rows||[], total=recompute._total||0;
+  const v=recompute._v||verdictFor(0,false);
+  const transplant=recompute._transplant;
+  const dx=(document.getElementById("fDx").value||"").trim();
+  const period=(document.getElementById("fPeriod").value||"").trim();
+
+  const L=[];
+  L.push("장애유형: 심장장애");
+  L.push("원인질환: "+(dx||"[                                ]"));
+  L.push("");
+  L.push("본 환자는 장애진단 직전 1년 이상 지속적 치료에도 호전 없이 장애가 고착된 상태로,");
+  L.push("「장애정도판정기준」(보건복지부 고시 제2023-42호) 심장장애 판정기준에 따라");
+  L.push("다음과 같이 평가함.");
+  L.push("");
+  rows.forEach(x=>{
+    const sc=(x.score===null||x.score===undefined)?0:x.score;
+    L.push(`- (${x.code}) ${x.title}: ${evidencePhrase(x.code,x)} → ${sc}점`);
+  });
+  L.push("");
+  if(transplant){
+    L.push(`합산 ${total}점이나, 심장이식을 받은 사람으로 「장애의 정도가 심하지 않은`);
+    L.push(`장애인」에 해당한다고 사료됨.`);
+  } else if(total>=20){
+    const band = total>=30 ? "30점 이상" : (total>=25 ? "25~29점" : "20~24점");
+    L.push(`합산 ${total}점(${band})으로, 「장애의 정도가 심한 장애인」에 해당한다고 사료됨.`);
+  } else {
+    L.push(`합산 ${total}점으로 현행 심장장애 기준(20점)에 미달하여, 심장장애에`);
+    L.push(`해당하지 않는 것으로 사료됨.`);
+  }
+  L.push("");
+  L.push("진료기간: "+(period||"[          ]  ~  [          ]"));
+  L.push("");
+  L.push("첨부: 심초음파 보고서, 운동부하검사 결과지, 흉부 X선·심전도 판독지,");
+  L.push("      입퇴원요약지, 직전 1년 이상 외래 경과기록지.");
+  return L.join("\n");
+}
+
+function refreshOpinion(){
+  const ta=document.getElementById("opinionText");
+  if(ta) ta.value=buildOpinionText();
+}
 function copyResult(){
   const text=buildCopyText(), toast=document.getElementById("copiedToast");
+  const done=()=>{toast.classList.add("show");setTimeout(()=>toast.classList.remove("show"),1600);};
+  if(navigator.clipboard&&navigator.clipboard.writeText){
+    navigator.clipboard.writeText(text).then(done).catch(()=>fallbackCopy(text,done));
+  } else fallbackCopy(text,done);
+}
+function copyOpinion(){
+  const text=document.getElementById("opinionText").value, toast=document.getElementById("copiedToast2");
   const done=()=>{toast.classList.add("show");setTimeout(()=>toast.classList.remove("show"),1600);};
   if(navigator.clipboard&&navigator.clipboard.writeText){
     navigator.clipboard.writeText(text).then(done).catch(()=>fallbackCopy(text,done));
@@ -618,14 +754,25 @@ function fallbackCopy(text,cb){
 }
 function resetAll(){
   state.exMode="exercise"; state.exScore=null; state.lvefMode="standard"; state.lvefScore=null;
+  _opinionEdited=false;
+  const dx=document.getElementById("fDx"), pr=document.getElementById("fPeriod");
+  if(dx) dx.value=""; if(pr) pr.value="";
   renderCards(); recompute(); window.scrollTo({top:0,behavior:"smooth"});
 }
 
 /* 시작 */
 document.getElementById("copyBtn").addEventListener("click",copyResult);
 document.getElementById("resetBtn").addEventListener("click",resetAll);
+document.getElementById("copyOpinionBtn").addEventListener("click",copyOpinion);
+document.getElementById("refreshOpinionBtn").addEventListener("click",()=>{ _opinionEdited=false; refreshOpinion(); });
+// 원인질환/진료기간 입력 시 초안 갱신 (사용자가 본문을 직접 고치기 전까지)
+document.getElementById("fDx").addEventListener("input",()=>{ if(!opinionLocked()) refreshOpinion(); });
+document.getElementById("fPeriod").addEventListener("input",()=>{ if(!opinionLocked()) refreshOpinion(); });
+// textarea 직접 편집 감지 → 이후 자동 덮어쓰기 중단
+document.getElementById("opinionText").addEventListener("input",()=>{ _opinionEdited=true; });
 renderCards();
 recompute();
+refreshOpinion();
 </script>
 </body>
 </html>
