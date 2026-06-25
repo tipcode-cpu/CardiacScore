@@ -1,0 +1,627 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>심장장애 정도 판정 점수 계산기</title>
+<!--
+  ============================================================================
+  심장장애 정도 판정 점수 계산기 (참고용)
+  ----------------------------------------------------------------------------
+  - 보건복지부 「장애정도 판정기준」(고시) 중 '심장장애 판정기준'의
+    7개 평가항목·배점 구조를 반영한 단일 HTML 계산기.
+  - 서버 불필요. index.html 하나로 동작. 순수 HTML/CSS/JS.
+  ----------------------------------------------------------------------------
+  ※ 배점 구조(검증된 현행 기준, 2012.6 개정 반영):
+      (가) 운동부하검사 또는 심장질환증상중등도 ......... 5점
+      (나) 좌심실구혈률(LVEF) / 선천성·정상EF 가중표 ..... 8점
+      (다) 검사소견(흉부X선 5 + 심전도 5, 청색증 별도) ... 10점
+      (라) 심장수술 및 중재시술 병력 .................... 8점
+      (마) 입원병력 (최근 9개월 이내) ................... 5점
+      (바) 입원횟수 (최근 9개월 이내) ................... 3점
+      (사) 치료병력 (최근 9개월 이내) ................... 3점
+      ----------------------------------------------------------------
+      총점 만점 = 42점  (원래 의뢰서의 '39점'은 2012년 이전 구기준)
+  ----------------------------------------------------------------------------
+  ※ 세부 선택지(option)의 정확한 배점 중 일부(METs 구간, LVEF 구간 점수 등)는
+    고시 원문 표를 선생님이 직접 대조·확정하셔야 합니다. 확정이 필요한 항목은
+    각 항목 데이터의  verify:true  플래그와 라벨 (확인필요) 로 표시했습니다.
+    => 아래 SCORING_CRITERIA 배열만 수정하면 화면 전체가 자동 갱신됩니다.
+  ============================================================================
+-->
+<style>
+  /* ---------------------------------------------------------------------
+     디자인 토큰 — 의료용 계산기. 흰 배경 / navy·slate·muted burgundy 포인트.
+     과도한 애니메이션 없음. (1줄 hairline, 차분한 카드)
+     --------------------------------------------------------------------- */
+  :root{
+    --navy:#1f2a44;          /* 주요 텍스트·헤더 */
+    --navy-deep:#16203a;
+    --slate:#5b6577;         /* 보조 텍스트 */
+    --slate-light:#8a93a3;
+    --burgundy:#7c2d3a;      /* 포인트(선택·강조) */
+    --burgundy-soft:#f3e7e9; /* 선택된 배경 틴트 */
+    --line:#e3e6ec;          /* 경계선 */
+    --line-soft:#eef0f4;
+    --bg:#ffffff;
+    --bg-muted:#f7f8fa;
+    --ok:#2f6f4f;
+    --warn:#9a6b18;
+    --radius:10px;
+    --maxw:880px;
+    --font: "Pretendard","Apple SD Gothic Neo","Malgun Gothic","Segoe UI",system-ui,sans-serif;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    font-family:var(--font);
+    color:var(--navy);
+    background:var(--bg-muted);
+    line-height:1.5;
+    -webkit-font-smoothing:antialiased;
+    font-size:15px;
+  }
+  .wrap{max-width:var(--maxw);margin:0 auto;padding:0 16px 64px;}
+
+  /* ---------- 헤더 ---------- */
+  header.app{
+    background:var(--bg);
+    border-bottom:1px solid var(--line);
+    padding:22px 0 18px;
+  }
+  header.app .inner{max-width:var(--maxw);margin:0 auto;padding:0 16px;}
+  header.app h1{
+    font-size:1.18rem;font-weight:700;margin:0;letter-spacing:-0.01em;
+    color:var(--navy-deep);
+  }
+  header.app p{margin:6px 0 0;color:var(--slate);font-size:0.86rem;}
+
+  /* ---------- 상단 점수 패널 (sticky) ---------- */
+  .scorebar{
+    position:sticky;top:0;z-index:30;
+    background:var(--navy);
+    color:#fff;
+    border-radius:0 0 var(--radius) var(--radius);
+    box-shadow:0 2px 10px rgba(31,42,68,.18);
+    padding:16px 20px;
+    margin-bottom:22px;
+    display:flex;align-items:center;justify-content:space-between;
+    gap:16px;flex-wrap:wrap;
+  }
+  .scorebar .total{display:flex;align-items:baseline;gap:10px;}
+  .scorebar .total .num{font-size:2.5rem;font-weight:800;line-height:1;letter-spacing:-0.02em;}
+  .scorebar .total .den{font-size:1rem;color:#b9c2d6;font-weight:500;}
+  .scorebar .total .lbl{font-size:.8rem;color:#b9c2d6;display:block;margin-bottom:2px;}
+  .scorebar .verdict{
+    text-align:right;
+  }
+  .scorebar .verdict .tag{
+    display:inline-block;font-weight:700;font-size:1.05rem;
+    padding:5px 12px;border-radius:999px;background:#fff;color:var(--navy);
+  }
+  .scorebar .verdict .sub{display:block;font-size:.76rem;color:#b9c2d6;margin-top:5px;max-width:320px;}
+
+  /* ---------- 카드 ---------- */
+  .card{
+    background:var(--bg);
+    border:1px solid var(--line);
+    border-radius:var(--radius);
+    padding:18px 18px 8px;
+    margin-bottom:14px;
+  }
+  .card > .head{
+    display:flex;align-items:flex-start;justify-content:space-between;
+    gap:12px;margin-bottom:12px;
+  }
+  .card .idx{
+    font-variant-numeric:tabular-nums;
+    color:var(--burgundy);font-weight:700;font-size:.82rem;
+    border:1px solid var(--burgundy);border-radius:6px;
+    padding:1px 7px;margin-right:9px;flex:none;
+  }
+  .card h2{font-size:1rem;font-weight:700;margin:0;display:flex;align-items:center;}
+  .card .desc{color:var(--slate);font-size:.8rem;margin:4px 0 0 0;}
+  .card .max{
+    flex:none;font-size:.78rem;color:var(--slate);
+    background:var(--bg-muted);border:1px solid var(--line);
+    border-radius:999px;padding:3px 10px;white-space:nowrap;
+  }
+  .card .max b{color:var(--navy);font-variant-numeric:tabular-nums;}
+  .verify-flag{
+    font-size:.7rem;color:var(--warn);font-weight:600;
+    margin-left:8px;border:1px dashed var(--warn);border-radius:5px;padding:0 5px;
+  }
+
+  /* ---------- 옵션(라디오) ---------- */
+  .opts{display:flex;flex-direction:column;gap:0;margin:0 0 8px;}
+  label.opt{
+    display:flex;align-items:flex-start;gap:11px;
+    padding:11px 10px;border-top:1px solid var(--line-soft);
+    cursor:pointer;transition:background .12s ease;
+  }
+  label.opt:first-child{border-top:none;}
+  label.opt:hover{background:var(--bg-muted);}
+  label.opt input{
+    margin:2px 0 0;flex:none;width:17px;height:17px;
+    accent-color:var(--burgundy);cursor:pointer;
+  }
+  label.opt .otext{flex:1;font-size:.9rem;color:var(--navy);}
+  label.opt .opt-sub{display:block;font-size:.76rem;color:var(--slate-light);margin-top:2px;}
+  label.opt .opt-score{
+    flex:none;font-variant-numeric:tabular-nums;font-weight:700;font-size:.86rem;
+    color:var(--slate);min-width:34px;text-align:right;
+  }
+  /* 선택된 행 강조 */
+  label.opt:has(input:checked){background:var(--burgundy-soft);}
+  label.opt:has(input:checked) .otext{color:var(--burgundy);font-weight:600;}
+  label.opt:has(input:checked) .opt-score{color:var(--burgundy);}
+
+  /* ---------- 결과 영역 ---------- */
+  .result{
+    background:var(--bg);border:1px solid var(--line);
+    border-radius:var(--radius);padding:20px;margin-top:20px;
+  }
+  .result h2{margin:0 0 14px;font-size:1.05rem;color:var(--navy-deep);}
+  .result .grid{display:flex;gap:14px;flex-wrap:wrap;margin-bottom:16px;}
+  .result .stat{
+    flex:1;min-width:140px;background:var(--bg-muted);
+    border:1px solid var(--line);border-radius:8px;padding:12px 14px;
+  }
+  .result .stat .k{font-size:.76rem;color:var(--slate);}
+  .result .stat .v{font-size:1.35rem;font-weight:800;color:var(--navy);margin-top:3px;
+    font-variant-numeric:tabular-nums;letter-spacing:-0.01em;}
+  .result .stat .v.small{font-size:1.05rem;}
+  .summary-tbl{width:100%;border-collapse:collapse;margin:4px 0 8px;font-size:.86rem;}
+  .summary-tbl th,.summary-tbl td{
+    text-align:left;padding:8px 6px;border-bottom:1px solid var(--line-soft);
+  }
+  .summary-tbl th{color:var(--slate);font-weight:600;font-size:.78rem;}
+  .summary-tbl td.s{text-align:right;font-variant-numeric:tabular-nums;font-weight:600;}
+  .summary-tbl td.none{color:var(--slate-light);font-weight:400;}
+  .summary-tbl tr.sum td{font-weight:700;}
+  .summary-tbl tfoot td{border-top:2px solid var(--line);font-weight:800;padding-top:10px;}
+
+  /* ---------- 버튼 ---------- */
+  .actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:18px;}
+  button{
+    font-family:inherit;font-size:.9rem;font-weight:600;cursor:pointer;
+    border-radius:8px;padding:11px 20px;border:1px solid transparent;
+    transition:background .12s ease,border-color .12s ease;
+  }
+  button.primary{background:var(--burgundy);color:#fff;}
+  button.primary:hover{background:#682430;}
+  button.ghost{background:#fff;color:var(--navy);border-color:var(--line);}
+  button.ghost:hover{background:var(--bg-muted);}
+  button:focus-visible{outline:3px solid rgba(124,45,58,.35);outline-offset:2px;}
+
+  .copied-toast{
+    font-size:.82rem;color:var(--ok);font-weight:600;
+    margin-left:4px;align-self:center;opacity:0;transition:opacity .2s;
+  }
+  .copied-toast.show{opacity:1;}
+
+  /* ---------- 안내 / disclaimer ---------- */
+  .notice{
+    background:#fbf6ee;border:1px solid #ecdfc6;border-radius:8px;
+    padding:12px 14px;font-size:.82rem;color:#6b5520;margin:18px 0 0;
+  }
+  .notice b{color:#5a4416;}
+  footer.disc{
+    margin-top:24px;padding-top:18px;border-top:1px solid var(--line);
+    font-size:.76rem;color:var(--slate);line-height:1.65;
+  }
+  footer.disc b{color:var(--navy);}
+
+  /* ---------- 반응형 ---------- */
+  @media (max-width:560px){
+    .scorebar{padding:14px 16px;}
+    .scorebar .total .num{font-size:2.1rem;}
+    .scorebar .verdict{text-align:left;}
+    .scorebar .verdict .sub{max-width:none;}
+    .card{padding:16px 14px 6px;}
+    .result .stat{min-width:calc(50% - 7px);}
+  }
+  @media print{
+    .scorebar{position:static;box-shadow:none;}
+    .actions,.notice{display:none;}
+    body{background:#fff;}
+  }
+</style>
+</head>
+<body>
+
+<header class="app">
+  <div class="inner">
+    <h1>심장장애 정도 판정 점수 계산기</h1>
+    <p>보건복지부 「장애정도 판정기준」 심장장애 7개 평가항목 · 총점 42점 · 참고용</p>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <!-- 상단 sticky 점수 패널: 선택 즉시 갱신 -->
+  <div class="scorebar" id="scorebar">
+    <div class="total">
+      <div>
+        <span class="lbl">총점</span>
+        <span class="num" id="totalNum">0</span><span class="den" id="totalDen">/ 42</span>
+      </div>
+    </div>
+    <div class="verdict">
+      <span class="tag" id="verdictTag">미선택</span>
+      <span class="sub" id="verdictSub">항목을 선택하면 예상 판정이 표시됩니다.</span>
+    </div>
+  </div>
+
+  <!-- 카드들이 JS로 렌더링됨 -->
+  <div id="cards"></div>
+
+  <!-- 결과 영역 -->
+  <div class="result" id="resultPanel">
+    <h2>결과 요약</h2>
+    <div class="grid">
+      <div class="stat">
+        <div class="k">총점</div>
+        <div class="v"><span id="rTotal">0</span> <span style="font-size:.9rem;color:var(--slate);font-weight:500;">/ 42</span></div>
+      </div>
+      <div class="stat">
+        <div class="k">예상 판정 (현행)</div>
+        <div class="v small" id="rVerdictNow">—</div>
+      </div>
+      <div class="stat">
+        <div class="k">구 등급 환산 (참고)</div>
+        <div class="v small" id="rVerdictOld">—</div>
+      </div>
+    </div>
+
+    <table class="summary-tbl" id="summaryTbl">
+      <thead>
+        <tr><th>평가항목</th><th>선택 내용</th><th style="text-align:right;">점수</th></tr>
+      </thead>
+      <tbody id="summaryBody"></tbody>
+      <tfoot>
+        <tr><td colspan="2">합계</td><td class="s" id="summaryTotal">0 / 42</td></tr>
+      </tfoot>
+    </table>
+
+    <div class="actions">
+      <button class="primary" id="copyBtn">결과 복사</button>
+      <button class="ghost" id="resetBtn">Reset</button>
+      <span class="copied-toast" id="copiedToast">복사되었습니다</span>
+    </div>
+
+    <div class="notice">
+      <b>현행 제도 안내 —</b> 2019년 7월 장애등급제 폐지 이후 현행 제도는 등급제가 아니라
+      <b>「장애 정도」</b> 체계입니다(심한 장애인 / 심하지 않은 장애인). 본 계산기의
+      '구 등급 환산'은 과거 1·2·3급 점수구간을 <b>참고용</b>으로만 표시한 값이며,
+      실제 판정 결과와 다를 수 있습니다.
+    </div>
+  </div>
+
+  <footer class="disc">
+    <b>Disclaimer.</b> 본 도구는 임상 현장의 빠른 점수 추정을 돕기 위한 <b>참고용 계산기</b>이며
+    공식 판정 도구가 아닙니다. 실제 심장장애 정도의 최종 판정은 보건복지부
+    「장애정도 판정기준」 고시 원문, 국민연금공단 장애심사 및 자문의 의학적 판단에 따릅니다.
+    일부 세부 선택지의 배점(예: 운동부하검사 METs 구간, LVEF 구간 점수)은 고시 원문 표와
+    대조하여 사용 전 반드시 검증하시기 바랍니다. 본 도구의 결과를 진단서·소견서에 그대로
+    옮겨 적기 전 원문 기준을 확인하십시오.
+    <br><br>
+    <b>배점 출처.</b> 운동부하/증상중등도 5 · LVEF 8 · 검사소견 10 · 수술·중재시술 8 ·
+    입원병력 5 · 입원횟수 3 · 치료병력 3 (총 42점, 2012.6 개정 반영).
+  </footer>
+
+</div>
+
+<script>
+/* ============================================================================
+   SCORING_CRITERIA — 모든 평가항목·선택지·배점을 한 곳에서 관리하는 배열.
+   ----------------------------------------------------------------------------
+   이 배열만 수정하면 화면(카드·점수·요약·판정)이 전부 자동 갱신됩니다.
+
+   각 항목 객체 구조:
+     id      : 내부 식별자 (라디오 name)
+     code    : 고시 항목기호 (가)~(사)
+     title   : 항목명
+     desc    : 보조 설명 (없으면 생략 가능)
+     max     : 항목 만점 (선택지 점수는 이 값을 초과하지 않도록 구성)
+     verify  : true 면 '확인필요' 배지 표시 (세부배점 미확정)
+     options : [{label, sub?, score}]  — 라디오 선택지
+
+   ※ verify:true 인 항목의 점수는 placeholder/추정이므로 고시 원문 대조 필요.
+   ============================================================================ */
+const SCORING_CRITERIA = [
+  {
+    id: "exercise",
+    code: "가",
+    title: "운동부하검사 또는 심장질환증상중등도",
+    desc: "객관적 운동부하검사 우선. 불가·부적절 시 증상중등도(NYHA 등) 적용.",
+    max: 5,
+    verify: true,   // METs 구간별 세부 배점은 고시 원문 대조 필요
+    options: [
+      { label: "정상 / 경한 제한 없음", sub: "NYHA I 상당", score: 0 },
+      { label: "경도 제한", sub: "NYHA II 상당", score: 2 },
+      { label: "중등도 제한", sub: "NYHA III 상당", score: 4 },
+      { label: "고도 제한 (안정 시 증상)", sub: "NYHA IV 상당", score: 5 }
+    ]
+  },
+  {
+    id: "lvef",
+    code: "나",
+    title: "좌심실구혈률 (LVEF)",
+    desc: "심초음파 또는 핵의학검사. 선천성·EF정상 제한질환은 별도 가중표 적용.",
+    max: 8,
+    verify: true,   // LVEF 구간 경계·점수는 고시 원문 표 대조 필요
+    options: [
+      { label: "LVEF 정상 범위", sub: "구간 예시값 — 확인필요", score: 0 },
+      { label: "LVEF 경도 감소", sub: "구간 예시값 — 확인필요", score: 3 },
+      { label: "LVEF 중등도 감소", sub: "구간 예시값 — 확인필요", score: 5 },
+      { label: "LVEF 고도 감소", sub: "구간 예시값 — 확인필요", score: 8 }
+    ]
+  },
+  {
+    id: "findings",
+    code: "다",
+    title: "검사소견 (흉부 X선 + 심전도)",
+    desc: "흉부 X선 5점·심전도 5점 이내. 심비대 중복 시 한 가지만 2점 적용.",
+    max: 10,
+    verify: true,   // 흉부X선·심전도 세부 항목별 점수는 고시 원문 대조 필요
+    options: [
+      { label: "특이소견 없음", score: 0 },
+      { label: "경도 이상소견", sub: "예시값 — 확인필요", score: 3 },
+      { label: "중등도 이상소견", sub: "예시값 — 확인필요", score: 6 },
+      { label: "고도 이상소견", sub: "예시값 — 확인필요", score: 10 }
+    ]
+  },
+  {
+    id: "surgery",
+    code: "라",
+    title: "심장수술 및 중재시술 병력",
+    desc: "해당 시술의 배점 적용 (2012.6 개정 반영, 항목 만점 8점).",
+    max: 8,
+    verify: false,  // 시술별 점수는 개정 고시에서 확인됨
+    options: [
+      { label: "해당 없음", score: 0 },
+      { label: "경피적 관상동맥 풍선확장술 / 스텐트", score: 3 },
+      { label: "경피적 승모판 풍선확장술", score: 3 },
+      { label: "기타 경피적 중재술", score: 3 },
+      { label: "인공심박동기 / ICD / CRT 삽입술", score: 3 },
+      { label: "심장이식", score: 4 },
+      { label: "관상동맥우회술 (CABG)", score: 4 },
+      { label: "인공판막 대치술 / 성형술", score: 4 }
+    ]
+  },
+  {
+    id: "admHistory",
+    code: "마",
+    title: "입원병력 (최근 9개월 이내)",
+    desc: "심부전·심근허혈 등 객관적 자료가 있는 입원.",
+    max: 5,
+    verify: true,   // 입원 정도별 세부 점수는 고시 원문 대조 필요
+    options: [
+      { label: "입원 없음", score: 0 },
+      { label: "입원력 있음 (경도)", sub: "예시값 — 확인필요", score: 2 },
+      { label: "입원력 있음 (중등도)", sub: "예시값 — 확인필요", score: 3 },
+      { label: "입원력 있음 (중증/집중치료)", sub: "예시값 — 확인필요", score: 5 }
+    ]
+  },
+  {
+    id: "admCount",
+    code: "바",
+    title: "입원횟수 (최근 9개월 이내)",
+    desc: "최근 9개월 내 입원 횟수.",
+    max: 3,
+    verify: true,   // 횟수-점수 매핑은 고시 원문 대조 필요
+    options: [
+      { label: "0회", score: 0 },
+      { label: "1회", score: 1 },
+      { label: "2회", score: 2 },
+      { label: "3회 이상", score: 3 }
+    ]
+  },
+  {
+    id: "treatment",
+    code: "사",
+    title: "치료병력 (최근 9개월 이내)",
+    desc: "약물·기구 등 치료 강도.",
+    max: 3,
+    verify: true,   // 치료강도별 점수는 고시 원문 대조 필요
+    options: [
+      { label: "해당 없음 / 경구 단독", score: 0 },
+      { label: "다제 병용 약물치료", sub: "예시값 — 확인필요", score: 1 },
+      { label: "정맥약물 / 강심제 등", sub: "예시값 — 확인필요", score: 2 },
+      { label: "기계적순환보조 등 고강도", sub: "예시값 — 확인필요", score: 3 }
+    ]
+  }
+];
+
+/* ----------------------------------------------------------------------------
+   현행 '장애 정도' 판정 구간 + 구 등급 환산(참고).
+   ※ 두 매핑 모두 사용 전 고시 원문으로 반드시 검증 필요(verify 성격).
+   -------------------------------------------------------------------------- */
+const MAX_TOTAL = SCORING_CRITERIA.reduce((s, c) => s + c.max, 0); // = 42
+
+// 구 등급 환산(참고용) — 과거 점수구간 기반 추정. 정확값 아님.
+function oldGradeLabel(total){
+  if (total >= 30) return "1급 상당";
+  if (total >= 25) return "2급 상당";
+  if (total >= 20) return "3급 상당";
+  return "기준 미달 가능성";
+}
+
+// 현행 '장애 정도' 라벨 — 점수구간은 예시이며 검증 필요.
+function currentVerdict(total){
+  if (total >= 25) return { tag: "심한 장애 (추정)", sub: "현행 '심한 장애인'에 해당할 가능성 — 고시 원문 확인 필요" };
+  if (total >= 20) return { tag: "경계 구간 (추정)", sub: "판정 경계 — 자문 및 고시 원문 확인 필요" };
+  return { tag: "기준 미달 가능성", sub: "현행 기준 미달 가능성 — 종합 판단 필요" };
+}
+
+/* ----------------------------------------------------------------------------
+   렌더링 — 카드 동적 생성
+   -------------------------------------------------------------------------- */
+const cardsEl = document.getElementById("cards");
+
+function renderCards(){
+  cardsEl.innerHTML = "";
+  SCORING_CRITERIA.forEach(item => {
+    const card = document.createElement("section");
+    card.className = "card";
+
+    // 헤더
+    const verifyBadge = item.verify
+      ? `<span class="verify-flag" title="세부 배점 미확정 — 고시 원문 대조 필요">확인필요</span>` : "";
+    let html = `
+      <div class="head">
+        <div>
+          <h2><span class="idx">${item.code}</span>${item.title}${verifyBadge}</h2>
+          ${item.desc ? `<p class="desc">${item.desc}</p>` : ""}
+        </div>
+        <span class="max">최대 <b>${item.max}</b>점</span>
+      </div>
+      <div class="opts">`;
+
+    // 선택지(라디오). data-score 로 점수 보관.
+    item.options.forEach((op, i) => {
+      const oid = `${item.id}_${i}`;
+      html += `
+        <label class="opt" for="${oid}">
+          <input type="radio" id="${oid}" name="${item.id}" value="${op.score}"
+                 data-item="${item.id}" data-label="${op.label.replace(/"/g,'&quot;')}">
+          <span class="otext">${op.label}${op.sub ? `<span class="opt-sub">${op.sub}</span>` : ""}</span>
+          <span class="opt-score">${op.score}점</span>
+        </label>`;
+    });
+
+    html += `</div>`;
+    card.innerHTML = html;
+    cardsEl.appendChild(card);
+  });
+
+  // 변경 이벤트 바인딩
+  cardsEl.querySelectorAll('input[type=radio]').forEach(r => {
+    r.addEventListener("change", recompute);
+  });
+}
+
+/* ----------------------------------------------------------------------------
+   계산 — 선택 즉시 총점·판정·요약 갱신
+   -------------------------------------------------------------------------- */
+function getSelections(){
+  // 각 항목에서 선택된 라디오를 수집
+  return SCORING_CRITERIA.map(item => {
+    const checked = cardsEl.querySelector(`input[name="${item.id}"]:checked`);
+    return {
+      code: item.code,
+      title: item.title,
+      max: item.max,
+      score: checked ? Number(checked.value) : null,
+      label: checked ? checked.dataset.label : null
+    };
+  });
+}
+
+function recompute(){
+  const sels = getSelections();
+  const total = sels.reduce((s, x) => s + (x.score || 0), 0);
+
+  // 상단 패널
+  document.getElementById("totalNum").textContent = total;
+  document.getElementById("totalDen").textContent = `/ ${MAX_TOTAL}`;
+  document.getElementById("rTotal").textContent = total;
+
+  const anySelected = sels.some(x => x.score !== null);
+  const v = currentVerdict(total);
+
+  const tagEl = document.getElementById("verdictTag");
+  const subEl = document.getElementById("verdictSub");
+  if (!anySelected){
+    tagEl.textContent = "미선택";
+    subEl.textContent = "항목을 선택하면 예상 판정이 표시됩니다.";
+  } else {
+    tagEl.textContent = v.tag;
+    subEl.textContent = v.sub;
+  }
+
+  // 결과 패널 스탯
+  document.getElementById("rVerdictNow").textContent = anySelected ? v.tag : "—";
+  document.getElementById("rVerdictOld").textContent = anySelected ? oldGradeLabel(total) : "—";
+
+  // 요약 테이블
+  const body = document.getElementById("summaryBody");
+  body.innerHTML = "";
+  sels.forEach(x => {
+    const tr = document.createElement("tr");
+    if (x.score === null){
+      tr.innerHTML = `<td>(${x.code}) ${x.title}</td>
+        <td class="none">미선택</td>
+        <td class="s none">– / ${x.max}</td>`;
+    } else {
+      tr.innerHTML = `<td>(${x.code}) ${x.title}</td>
+        <td>${x.label}</td>
+        <td class="s">${x.score} / ${x.max}</td>`;
+    }
+    body.appendChild(tr);
+  });
+  document.getElementById("summaryTotal").textContent = `${total} / ${MAX_TOTAL}`;
+}
+
+/* ----------------------------------------------------------------------------
+   결과 복사 — 클립보드용 텍스트 생성
+   -------------------------------------------------------------------------- */
+function buildCopyText(){
+  const sels = getSelections();
+  const total = sels.reduce((s, x) => s + (x.score || 0), 0);
+  const v = currentVerdict(total);
+  const lines = [];
+  lines.push("■ 심장장애 정도 판정 점수 (참고용)");
+  lines.push(`총점: ${total} / ${MAX_TOTAL}점`);
+  lines.push(`예상 판정(현행): ${v.tag}`);
+  lines.push(`구 등급 환산(참고): ${oldGradeLabel(total)}`);
+  lines.push("");
+  lines.push("[항목별 점수]");
+  sels.forEach(x => {
+    const val = x.score === null ? "미선택" : `${x.score}/${x.max}점 — ${x.label}`;
+    lines.push(`(${x.code}) ${x.title}: ${val}`);
+  });
+  lines.push("");
+  lines.push("※ 참고용. 최종 판정은 보건복지부 고시 및 국민연금공단 장애심사 기준에 따름.");
+  return lines.join("\n");
+}
+
+function copyResult(){
+  const text = buildCopyText();
+  const toast = document.getElementById("copiedToast");
+  const done = () => { toast.classList.add("show"); setTimeout(()=>toast.classList.remove("show"), 1600); };
+
+  if (navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(text).then(done).catch(()=>fallbackCopy(text, done));
+  } else {
+    fallbackCopy(text, done);
+  }
+}
+// 구형 브라우저/비보안 컨텍스트 대비 폴백
+function fallbackCopy(text, cb){
+  const ta = document.createElement("textarea");
+  ta.value = text; ta.style.position="fixed"; ta.style.opacity="0";
+  document.body.appendChild(ta); ta.select();
+  try { document.execCommand("copy"); cb(); } catch(e){ alert("복사 실패: 직접 선택하여 복사해 주세요."); }
+  document.body.removeChild(ta);
+}
+
+/* ----------------------------------------------------------------------------
+   초기화
+   -------------------------------------------------------------------------- */
+function resetAll(){
+  cardsEl.querySelectorAll('input[type=radio]').forEach(r => { r.checked = false; });
+  recompute();
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+/* ---------- 시작 ---------- */
+document.getElementById("copyBtn").addEventListener("click", copyResult);
+document.getElementById("resetBtn").addEventListener("click", resetAll);
+document.getElementById("totalDen").textContent = `/ ${MAX_TOTAL}`;
+renderCards();
+recompute();
+</script>
+</body>
+</html>
